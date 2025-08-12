@@ -21,14 +21,6 @@ local function create_job_from_documentation_command(documentation_command)
     })
 end
 
-local source_job = nil
-local cancel_fun = function()
-    if source_job  then
-        source_job:shutdown(0, 9)
-        source_job = nil
-    end
-end
-
 --- @param opts blink-cmp-dictionary.Options
 function DictionarySource.new(opts, config)
     local self = setmetatable({}, { __index = DictionarySource })
@@ -87,13 +79,13 @@ function DictionarySource:get_completions(context, callback)
     local min_keyword_length = utils.get_option(source_provider_config.min_keyword_length, context)
     if #prefix == 0 or #prefix < min_keyword_length then
         callback()
-        return cancel_fun
+        return function() end  -- No-op cancel since no job started
     end
     local async = utils.get_option(dictionary_source_config.async)
     local cmd = utils.get_option(dictionary_source_config.get_command)
     if not utils.truthy(cmd) then
         transformed_callback()
-        return cancel_fun
+        return function() end  -- No-op cancel
     end
     local cmd_args = utils.get_option(dictionary_source_config.get_command_args, prefix, cmd)
     local cat_writer = nil
@@ -124,12 +116,12 @@ function DictionarySource:get_completions(context, callback)
         })
     end
     ---@diagnostic disable-next-line: missing-fields
-    source_job = Job:new({
+    local job = Job:new({
         command = cmd,
         args = cmd_args,
         on_exit = function(j, code, signal)
             if signal == 9 then
-                -- shutdown mannually
+                -- shutdown manually
                 -- do not handle the result
                 return
             end
@@ -187,13 +179,20 @@ function DictionarySource:get_completions(context, callback)
         end,
         writer = cat_writer,
     })
-    source_job:after(vim.schedule_wrap(transformed_callback))
+    job:after(vim.schedule_wrap(transformed_callback))
     if async then
-        source_job:start()
+        job:start()
     else
-        source_job:sync()
+        job:sync()
     end
-    return cancel_fun
+    return function()
+        if job then
+            job:shutdown(0, 9)
+        end
+        if cat_writer then
+            cat_writer:shutdown(0, 9)
+        end
+    end
 end
 
 function DictionarySource:resolve(item, callback)
