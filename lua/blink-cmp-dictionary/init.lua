@@ -21,6 +21,20 @@ local function create_job_from_documentation_command(documentation_command)
     })
 end
 
+local source_job = nil
+local cat_writer = nil
+local cancel_fun = function()
+    if source_job  then
+        source_job:shutdown(0, 9)
+        source_job = nil
+    end
+
+    if cat_writer then
+        cat_writer:shutdown(0, 9)
+        cat_writer = nil
+    end
+end
+
 --- @param opts blink-cmp-dictionary.Options
 function DictionarySource.new(opts, config)
     local self = setmetatable({}, { __index = DictionarySource })
@@ -60,6 +74,8 @@ local function assemble_completion_items_from_output(feature, result)
 end
 
 function DictionarySource:get_completions(context, callback)
+    cancel_fun()
+
     local items = {}
     -- In order to make the capitalization work as expected, we must make the source
     -- in completion all the time so that when users delete some letters from the prefix,
@@ -79,16 +95,16 @@ function DictionarySource:get_completions(context, callback)
     local min_keyword_length = utils.get_option(source_provider_config.min_keyword_length, context)
     if #prefix == 0 or #prefix < min_keyword_length then
         callback()
-        return function() end  -- No-op cancel since no job started
+        return cancel_fun
     end
     local async = utils.get_option(dictionary_source_config.async)
     local cmd = utils.get_option(dictionary_source_config.get_command)
     if not utils.truthy(cmd) then
         transformed_callback()
-        return function() end  -- No-op cancel
+        return cancel_fun
     end
     local cmd_args = utils.get_option(dictionary_source_config.get_command_args, prefix, cmd)
-    local cat_writer = nil
+    cat_writer = nil
     local get_all_dictionary_files = function()
         local res = {}
         local dirs = utils.get_option(dictionary_source_config.dictionary_directories)
@@ -116,12 +132,12 @@ function DictionarySource:get_completions(context, callback)
         })
     end
     ---@diagnostic disable-next-line: missing-fields
-    local job = Job:new({
+    source_job = Job:new({
         command = cmd,
         args = cmd_args,
         on_exit = function(j, code, signal)
             if signal == 9 then
-                -- shutdown manually
+                -- shutdown mannually
                 -- do not handle the result
                 return
             end
@@ -179,20 +195,13 @@ function DictionarySource:get_completions(context, callback)
         end,
         writer = cat_writer,
     })
-    job:after(vim.schedule_wrap(transformed_callback))
+    source_job:after(vim.schedule_wrap(transformed_callback))
     if async then
-        job:start()
+        source_job:start()
     else
-        job:sync()
+        source_job:sync()
     end
-    return function()
-        if job then
-            job:shutdown(0, 9)
-        end
-        if cat_writer then
-            cat_writer:shutdown(0, 9)
-        end
-    end
+    return cancel_fun
 end
 
 function DictionarySource:resolve(item, callback)
