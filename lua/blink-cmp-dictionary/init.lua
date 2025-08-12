@@ -22,6 +22,12 @@ local function create_job_from_documentation_command(documentation_command)
 end
 
 local source_job = nil
+local cancel_fun = function()
+    if source_job  then
+        source_job:shutdown(0, 9)
+        source_job = nil
+    end
+end
 
 --- @param opts blink-cmp-dictionary.Options
 function DictionarySource.new(opts, config)
@@ -63,12 +69,6 @@ end
 
 function DictionarySource:get_completions(context, callback)
     local items = {}
-    local cancel_fun = function()
-        if source_job  then
-            source_job:shutdown(0, 9)
-            source_job = nil
-        end
-    end
     -- In order to make the capitalization work as expected, we must make the source
     -- in completion all the time so that when users delete some letters from the prefix,
     -- the source will be called again to get the completions.
