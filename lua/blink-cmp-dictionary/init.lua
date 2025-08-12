@@ -21,6 +21,8 @@ local function create_job_from_documentation_command(documentation_command)
     })
 end
 
+local source_job = nil
+
 --- @param opts blink-cmp-dictionary.Options
 function DictionarySource.new(opts, config)
     local self = setmetatable({}, { __index = DictionarySource })
@@ -61,7 +63,12 @@ end
 
 function DictionarySource:get_completions(context, callback)
     local items = {}
-    local cancel_fun = function() end
+    local cancel_fun = function()
+        if source_job  then
+            source_job:shutdown(0, 9)
+            source_job = nil
+        end
+    end
     -- In order to make the capitalization work as expected, we must make the source
     -- in completion all the time so that when users delete some letters from the prefix,
     -- the source will be called again to get the completions.
@@ -117,7 +124,7 @@ function DictionarySource:get_completions(context, callback)
         })
     end
     ---@diagnostic disable-next-line: missing-fields
-    local job = Job:new({
+    source_job = Job:new({
         command = cmd,
         args = cmd_args,
         on_exit = function(j, code, signal)
@@ -180,14 +187,11 @@ function DictionarySource:get_completions(context, callback)
         end,
         writer = cat_writer,
     })
-    job:after(vim.schedule_wrap(transformed_callback))
+    source_job:after(vim.schedule_wrap(transformed_callback))
     if async then
-        cancel_fun = function() job:shutdown(0, 9) end
-    end
-    if async then
-        job:start()
+        source_job:start()
     else
-        job:sync()
+        source_job:sync()
     end
     return cancel_fun
 end
